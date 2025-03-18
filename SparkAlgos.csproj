@@ -9,5 +9,11 @@
   <ItemGroup>
     <ProjectReference Include="../SparkCL/SparkCL.csproj" />
   </ItemGroup>
+  
+  <ItemGroup>
+    <None Update="Solvers.cl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>

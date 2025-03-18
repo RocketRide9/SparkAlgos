@@ -89,7 +89,7 @@ public class BicgStab : IDisposable
             prepare1.PushArg(_di);
             prepare1.PushArg(_ia);
             prepare1.PushArg(_ja);
-            prepare1.PushArg((uint)X.Count);
+            prepare1.PushArg(X.Count);
             prepare1.PushArg(r);
             prepare1.PushArg(_b);
             prepare1.PushArg(X);
@@ -120,7 +120,7 @@ public class BicgStab : IDisposable
             kernMul.SetArg(1, _di);
             kernMul.SetArg(2, _ia);
             kernMul.SetArg(3, _ja);
-            kernMul.SetArg(4, (uint)X.Count);
+            kernMul.SetArg(4, X.Count);
         
         Event MulExecute(SparkCL.Memory<Real> _a, SparkCL.Memory<Real> _res){
             kernMul.SetArg(5, _a);
@@ -153,7 +153,7 @@ public class BicgStab : IDisposable
         );
         Real DotExecute(SparkCL.Memory<Real> _x, SparkCL.Memory<Real> _y)
         {
-            kern1.SetArg(0, (uint)_x.Count);
+            kern1.SetArg(0, _x.Count);
             kern1.SetArg(1, _x);
             kern1.SetArg(2, _y);
             kern1.SetArg(3, dotpart);
