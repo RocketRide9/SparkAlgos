@@ -16,6 +16,11 @@ public class BicgStab : IDisposable
     const Real _eps = 1e-13f;
     public SparkCL.Memory<Real> X { get; private set; }
     SparkCL.Memory<Real> r;
+    SparkCL.Memory<Real> di_inv;
+    SparkCL.Memory<Real> y;
+    SparkCL.Memory<Real> z;
+    SparkCL.Memory<Real> ks;
+    SparkCL.Memory<Real> kt;
     SparkCL.Memory<Real> r_hat;
     SparkCL.Memory<Real> p;
     SparkCL.Memory<Real> nu;
@@ -59,6 +64,11 @@ public class BicgStab : IDisposable
         h       = new SparkCL.Memory<Real>(_b.Count);
         s       = new SparkCL.Memory<Real>(_b.Count);
         t       = new SparkCL.Memory<Real>(_b.Count);
+        di_inv  = new SparkCL.Memory<Real>(_b.Count);
+        y       = new SparkCL.Memory<Real>(_b.Count);
+        z       = new SparkCL.Memory<Real>(_b.Count);
+        ks      = new SparkCL.Memory<Real>(_b.Count);
+        kt      = new SparkCL.Memory<Real>(_b.Count);
         dotpart = new SparkCL.Memory<Real>(32*2);
         dotres  = new SparkCL.Memory<Real>(1);
     }
@@ -141,6 +151,29 @@ public class BicgStab : IDisposable
             return kernAxpy.Execute();
         }
         
+        var kernRsqrt = solvers.GetKernel(
+            "BLAS_rsqrt",
+            globalWork: new(PaddedTo(X.Count, 32)),
+            localWork:  new(32)
+        );
+        Event RsqrtExecute(SparkCL.Memory<Real> _y) {
+            kernRsqrt.SetArg(0, _y);
+            kernRsqrt.SetArg(1, _y.Count);
+            return kernRsqrt.Execute();
+        }
+        
+        var kernVecMul = solvers.GetKernel(
+            "VecMul",
+            globalWork: new(PaddedTo(X.Count, 32)),
+            localWork:  new(32)
+        );
+        Event VecMulExecute(SparkCL.Memory<Real> _y, SparkCL.Memory<Real> _x) {
+            kernVecMul.SetArg(0, _y);
+            kernVecMul.SetArg(1, _x);
+            kernVecMul.SetArg(2, _y.Count);
+            return kernVecMul.Execute();
+        }
+        
         var kern1 = solvers.GetKernel(
             "Xdot",
             globalWork: new(32*32*2),
@@ -167,6 +200,9 @@ public class BicgStab : IDisposable
             return dotres[0];
         }
 
+        // precond
+        _di.CopyTo(di_inv);
+        RsqrtExecute(di_inv);
         // BiCGSTAB
         // 1.
         prepare1.Execute();
@@ -181,20 +217,26 @@ public class BicgStab : IDisposable
         Real rr = 0;
         for (; iter < _maxIter; iter++)
         {
-            MulExecute(p, nu);
-
+            // 1.
+            p.CopyTo(y);
+            VecMulExecute(y, di_inv);
+            VecMulExecute(y, di_inv);
+            // 2.
+            MulExecute(y, nu);
+            
+            // 3.
             Real rnu = DotExecute(r_hat, nu);
             Real alpha = pp / rnu;
 
-            // 3. h = x + alpha*p
+            // 4. h = x + alpha*p
             X.CopyTo(h);
+            AxpyExecute(alpha, y, h);
             
-            AxpyExecute(alpha, p, h);
-            
-            // 4.
+            // 5.
             r.CopyTo(s);
             AxpyExecute(-alpha, nu, s);
 
+            // 6.
             Real ss = DotExecute(s, s);
             if (ss < _eps)
             {
@@ -203,32 +245,44 @@ public class BicgStab : IDisposable
                 X = h;
                 break;
             }
+            
+            // 7.
+            s.CopyTo(ks);
+            VecMulExecute(ks, di_inv);
+            ks.CopyTo(z);
+            VecMulExecute(z, di_inv);
 
-            MulExecute(s, t);
-
-            Real ts = DotExecute(s, t);
-            Real tt = DotExecute(t, t);
-            Real w = ts / tt;
-
-            // 8. 
-            h.CopyTo(X);
-            AxpyExecute(w, s, X);
+            // 8.
+            MulExecute(z, t);
 
             // 9.
+            t.CopyTo(kt);
+            VecMulExecute(kt, di_inv);
+            
+            Real ts = DotExecute(ks, kt);
+            Real tt = DotExecute(kt, kt);
+            Real w = ts / tt;
+
+            // 10. 
+            h.CopyTo(X);
+            AxpyExecute(w, z, X);
+
+            // 11.
             s.CopyTo(r);
             AxpyExecute(-w, t, r);
             
+            // 12.
             rr = DotExecute(r, r);
             if (rr < _eps)
             {
                 break;
             }
 
-            // 11-12.
+            // 13-14.
             Real pp1 = DotExecute(r, r_hat);
             Real beta = (pp1 / pp) * (alpha / w);
 
-            // 13.
+            // 15.
             PExecute(w, beta);
 
             Core.WaitQueue();

@@ -156,6 +156,34 @@ kernel void BLAS_scale
     }
 }
 
+// y = y^-1/2
+kernel void BLAS_rsqrt
+(
+    global real *y,
+    const int n
+)
+{
+    uint i = get_global_id(0);
+    if (i < n)
+    {
+        y[i] = rsqrt(y[i]);
+    }
+}
+
+kernel void VecMul
+(
+    global real *y,
+    const global real *x,
+    const int n
+)
+{
+    uint i = get_global_id(0);
+    if (i < n)
+    {
+        y[i] *= x[i];
+    }
+}
+
 kernel void BiCGSTAB_p
 (
     global real *p,
