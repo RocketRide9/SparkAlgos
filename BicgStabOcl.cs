@@ -90,19 +90,19 @@ public class BicgStab : IDisposable
         // BiCGSTAB
         var solvers = new SparkCL.Program("Solvers.cl");
 
-        var prepare1 = solvers.GetKernel(
-            "BiCGSTAB_prepare1",
+        var kernDiscrep = solvers.GetKernel(
+            "BiCGSTAB_disc",
             globalWork: new(PaddedTo(X.Count, 32)),
             localWork:  new(32)
         );
-            prepare1.PushArg(_mat);
-            prepare1.PushArg(_di);
-            prepare1.PushArg(_ia);
-            prepare1.PushArg(_ja);
-            prepare1.PushArg(X.Count);
-            prepare1.PushArg(r);
-            prepare1.PushArg(_b);
-            prepare1.PushArg(X);
+            kernDiscrep.PushArg(_mat);
+            kernDiscrep.PushArg(_di);
+            kernDiscrep.PushArg(_ia);
+            kernDiscrep.PushArg(_ja);
+            kernDiscrep.PushArg(X.Count);
+            kernDiscrep.PushArg(r);
+            kernDiscrep.PushArg(_b);
+            kernDiscrep.PushArg(X);
 
         var kernP = solvers.GetKernel(
             "BiCGSTAB_p",
@@ -205,7 +205,7 @@ public class BicgStab : IDisposable
         RsqrtExecute(di_inv);
         // BiCGSTAB
         // 1.
-        prepare1.Execute();
+        kernDiscrep.Execute();
         // 2.
         r.CopyTo(r_hat);
         // 3.
@@ -288,6 +288,10 @@ public class BicgStab : IDisposable
             Core.WaitQueue();
             pp = pp1;
         }
+
+        // get the true discrepancy
+        kernDiscrep.Execute();
+        rr = DotExecute(r, r);
 
         X.Read(true);
         return (rr, pp, iter);

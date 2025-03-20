@@ -104,7 +104,8 @@ kernel void dot_kernel
     if ( jj == 0 ) *res = work[0];
 }
 
-kernel void BiCGSTAB_prepare1
+// discrepancy
+kernel void BiCGSTAB_disc
 (
     // матрица
     global const real *mat,
