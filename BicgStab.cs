@@ -137,19 +137,6 @@ public class BicgStab : IDisposable
             kernMul.SetArg(6, _res);
             return kernMul.Execute();
         }
-            
-        var kernAxpy = solvers.GetKernel(
-            "BLAS_axpy",
-            globalWork: new(PaddedTo(X.Count, 32)),
-            localWork:  new(32)
-        );
-        Event AxpyExecute(Real _a, SparkCL.Memory<Real> _x, SparkCL.Memory<Real> _y) {
-            kernAxpy.SetArg(0, _a);
-            kernAxpy.SetArg(1, _x);
-            kernAxpy.SetArg(2, _y);
-            kernAxpy.SetArg(3, _y.Count);
-            return kernAxpy.Execute();
-        }
         
         var kernRsqrt = solvers.GetKernel(
             "BLAS_rsqrt",
@@ -174,31 +161,9 @@ public class BicgStab : IDisposable
             return kernVecMul.Execute();
         }
         
-        var kern1 = solvers.GetKernel(
-            "Xdot",
-            globalWork: new(32*32*2),
-            localWork: new(32)
-        );
-        var kern2 = solvers.GetKernel(
-            "XdotEpilogue",
-            globalWork: new(32),
-            localWork: new(32)
-        );
-        Real DotExecute(SparkCL.Memory<Real> _x, SparkCL.Memory<Real> _y)
-        {
-            kern1.SetArg(0, _x.Count);
-            kern1.SetArg(1, _x);
-            kern1.SetArg(2, _y);
-            kern1.SetArg(3, dotpart);
-            kern1.Execute();
-
-            kern2.SetArg(0, dotpart);
-            kern2.SetArg(1, dotres);
-            kern2.Execute();
-            dotres.Read(true);
-
-            return dotres[0];
-        }
+        var SBlas = SparkAlgos.Blas.GetInstance();
+        SBlas.Scratch64 = dotpart;
+        SBlas.Scratch1 = dotres;
 
         // precond
         _di.CopyTo(di_inv);
@@ -209,7 +174,7 @@ public class BicgStab : IDisposable
         // 2.
         r.CopyTo(r_hat);
         // 3.
-        Real pp = DotExecute(r, r); // r_hat * r
+        Real pp = SBlas.Dot(r, r); // r_hat * r
         // 4.
         r.CopyTo(p);
 
@@ -225,19 +190,19 @@ public class BicgStab : IDisposable
             MulExecute(y, nu);
             
             // 3.
-            Real rnu = DotExecute(r_hat, nu);
+            Real rnu = SBlas.Dot(r_hat, nu);
             Real alpha = pp / rnu;
 
             // 4. h = x + alpha*p
             X.CopyTo(h);
-            AxpyExecute(alpha, y, h);
+            SBlas.Axpy(alpha, y, h);
             
             // 5.
             r.CopyTo(s);
-            AxpyExecute(-alpha, nu, s);
+            SBlas.Axpy(-alpha, nu, s);
 
             // 6.
-            Real ss = DotExecute(s, s);
+            Real ss = SBlas.Dot(s, s);
             if (ss < _eps)
             {
                 // тогда h - решение. Предыдущий вектор x можно освободить
@@ -259,39 +224,38 @@ public class BicgStab : IDisposable
             t.CopyTo(kt);
             VecMulExecute(kt, di_inv);
             
-            Real ts = DotExecute(ks, kt);
-            Real tt = DotExecute(kt, kt);
+            Real ts = SBlas.Dot(ks, kt);
+            Real tt = SBlas.Dot(kt, kt);
             Real w = ts / tt;
 
             // 10. 
             h.CopyTo(X);
-            AxpyExecute(w, z, X);
+            SBlas.Axpy(w, z, X);
 
             // 11.
             s.CopyTo(r);
-            AxpyExecute(-w, t, r);
+            SBlas.Axpy(-w, t, r);
             
             // 12.
-            rr = DotExecute(r, r);
+            rr = SBlas.Dot(r, r);
             if (rr < _eps)
             {
                 break;
             }
 
             // 13-14.
-            Real pp1 = DotExecute(r, r_hat);
+            Real pp1 = SBlas.Dot(r, r_hat);
             Real beta = (pp1 / pp) * (alpha / w);
 
             // 15.
             PExecute(w, beta);
 
-            Core.WaitQueue();
             pp = pp1;
         }
 
         // get the true discrepancy
         kernDiscrep.Execute();
-        rr = DotExecute(r, r);
+        rr = SBlas.Dot(r, r);
 
         X.Read(true);
         return (rr, pp, iter);
