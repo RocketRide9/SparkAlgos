@@ -13,7 +13,7 @@ public class BicgStab : IDisposable
     SparkCL.Memory<int> _ja;
 
     int _maxIter;
-    const Real _eps = 1e-13f;
+    Real _eps;
     public SparkCL.Memory<Real> X { get; private set; }
     SparkCL.Memory<Real> r;
     SparkCL.Memory<Real> di_inv;
@@ -39,9 +39,11 @@ public class BicgStab : IDisposable
         SparkCL.Memory<int> Ja,
 
         SparkCL.Memory<Real> x0,
-        int maxIter)
+        int maxIter,
+        Real eps)
     {
         _maxIter = maxIter;
+        _eps = eps;
 
         _mat = Mat; 
         _di = Di; 
@@ -179,7 +181,7 @@ public class BicgStab : IDisposable
         r.CopyTo(p);
 
         int iter = 0;
-        Real rr = 0;
+        Real rr;
         for (; iter < _maxIter; iter++)
         {
             // 1.
