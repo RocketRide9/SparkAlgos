@@ -29,6 +29,8 @@ public class Blas
 
     private Blas()
     {
+        var localWork = new SparkOCL.NDRange(16);
+        
         _solvers = new SparkCL.Program("Blas.cl");
         _dot1 = _solvers.GetKernel(
             "Xdot",
@@ -44,12 +46,12 @@ public class Blas
         _scale = _solvers.GetKernel(
             "BLAS_scale",
             globalWork: new(1),
-            localWork: new(32)
+            localWork: localWork
         );
         _axpy = _solvers.GetKernel(
             "BLAS_axpy",
             globalWork: new(1),
-            localWork: new(32)
+            localWork: localWork
         );
     }
     

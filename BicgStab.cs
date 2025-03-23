@@ -14,7 +14,8 @@ public class BicgStab : IDisposable
 
     int _maxIter;
     Real _eps;
-    public SparkCL.Memory<Real> X { get; private set; }
+    SparkCL.Memory<Real> _x;
+    
     SparkCL.Memory<Real> r;
     SparkCL.Memory<Real> di_inv;
     SparkCL.Memory<Real> y;
@@ -32,27 +33,27 @@ public class BicgStab : IDisposable
     private bool disposedValue;
 
     public BicgStab(
-        SparkCL.Memory<Real> Mat,
-        SparkCL.Memory<Real> Di,
-        SparkCL.Memory<Real> B,
-        SparkCL.Memory<int> Ia,
-        SparkCL.Memory<int> Ja,
+        SparkOCL.Array<Real> Mat,
+        SparkOCL.Array<Real> Di,
+        SparkOCL.Array<Real> B,
+        SparkOCL.Array<int> Ia,
+        SparkOCL.Array<int> Ja,
 
-        SparkCL.Memory<Real> x0,
+        SparkOCL.Array<Real> x0,
         int maxIter,
         Real eps)
     {
         _maxIter = maxIter;
         _eps = eps;
 
-        _mat = Mat; 
-        _di = Di; 
-        _b = B; 
-        _ia = Ia; 
-        _ja = Ja; 
+        _mat = SparkCL.Memory<Real>.ForArray(Mat); 
+        _di = SparkCL.Memory<Real>.ForArray(Di); 
+        _b = SparkCL.Memory<Real>.ForArray(B); 
+        _ia = SparkCL.Memory<int>.ForArray(Ia); 
+        _ja = SparkCL.Memory<int>.ForArray(Ja); 
 
-        X = x0;
-        X.Write();
+        _x = SparkCL.Memory<Real>.ForArray(x0);
+        _x.Write();
         _b.Write();
         _ia.Write();
         _ja.Write();
@@ -85,31 +86,32 @@ public class BicgStab : IDisposable
         }
     }
 
-    public (Real rr, Real pp, int iter) Solve()
+    public (Array<Real> ans, Real rr, Real pp, int iter) Solve()
     {
-        // Вынос векторов в текущую область видимости
+        var globalWork = new NDRange(PaddedTo(_x.Count, 32));
+        var localWork = new NDRange(16);
 
         // BiCGSTAB
         var solvers = new SparkCL.Program("Solvers.cl");
 
         var kernDiscrep = solvers.GetKernel(
             "BiCGSTAB_disc",
-            globalWork: new(PaddedTo(X.Count, 32)),
-            localWork:  new(32)
+            globalWork,
+            localWork
         );
             kernDiscrep.PushArg(_mat);
             kernDiscrep.PushArg(_di);
             kernDiscrep.PushArg(_ia);
             kernDiscrep.PushArg(_ja);
-            kernDiscrep.PushArg(X.Count);
+            kernDiscrep.PushArg(_x.Count);
             kernDiscrep.PushArg(r);
             kernDiscrep.PushArg(_b);
-            kernDiscrep.PushArg(X);
+            kernDiscrep.PushArg(_x);
 
         var kernP = solvers.GetKernel(
             "BiCGSTAB_p",
-            globalWork: new(PaddedTo(X.Count, 32)),
-            localWork:  new(32)
+            globalWork,
+            localWork
         );
             kernP.SetArg(0, p);
             kernP.SetArg(1, r);
@@ -125,14 +127,14 @@ public class BicgStab : IDisposable
 
         var kernMul = solvers.GetKernel(
             "MSRMul",
-            globalWork: new(PaddedTo(X.Count, 32)),
-            localWork:  new(32)
+            globalWork,
+            localWork
         );
             kernMul.SetArg(0, _mat);
             kernMul.SetArg(1, _di);
             kernMul.SetArg(2, _ia);
             kernMul.SetArg(3, _ja);
-            kernMul.SetArg(4, X.Count);
+            kernMul.SetArg(4, _x.Count);
         
         Event MulExecute(SparkCL.Memory<Real> _a, SparkCL.Memory<Real> _res){
             kernMul.SetArg(5, _a);
@@ -142,8 +144,8 @@ public class BicgStab : IDisposable
         
         var kernRsqrt = solvers.GetKernel(
             "BLAS_rsqrt",
-            globalWork: new(PaddedTo(X.Count, 32)),
-            localWork:  new(32)
+            globalWork,
+            localWork
         );
         Event RsqrtExecute(SparkCL.Memory<Real> _y) {
             kernRsqrt.SetArg(0, _y);
@@ -153,8 +155,8 @@ public class BicgStab : IDisposable
         
         var kernVecMul = solvers.GetKernel(
             "VecMul",
-            globalWork: new(PaddedTo(X.Count, 32)),
-            localWork:  new(32)
+            globalWork,
+            localWork
         );
         Event VecMulExecute(SparkCL.Memory<Real> _y, SparkCL.Memory<Real> _x) {
             kernVecMul.SetArg(0, _y);
@@ -196,7 +198,7 @@ public class BicgStab : IDisposable
             Real alpha = pp / rnu;
 
             // 4. h = x + alpha*p
-            X.CopyTo(h);
+            _x.CopyTo(h);
             SBlas.Axpy(alpha, y, h);
             
             // 5.
@@ -208,8 +210,8 @@ public class BicgStab : IDisposable
             if (ss < _eps)
             {
                 // тогда h - решение. Предыдущий вектор x можно освободить
-                X.Dispose();
-                X = h;
+                _x.Dispose();
+                _x = h;
                 break;
             }
             
@@ -231,8 +233,8 @@ public class BicgStab : IDisposable
             Real w = ts / tt;
 
             // 10. 
-            h.CopyTo(X);
-            SBlas.Axpy(w, z, X);
+            h.CopyTo(_x);
+            SBlas.Axpy(w, z, _x);
 
             // 11.
             s.CopyTo(r);
@@ -259,8 +261,8 @@ public class BicgStab : IDisposable
         kernDiscrep.Execute();
         rr = SBlas.Dot(r, r);
 
-        X.Read(true);
-        return (rr, pp, iter);
+        _x.Read();
+        return (_x.Array, rr, pp, iter);
     }
 
     protected virtual void Dispose(bool disposing)
