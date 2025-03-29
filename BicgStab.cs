@@ -209,9 +209,11 @@ public class BicgStab : IDisposable
             Real ss = SBlas.Dot(s, s);
             if (ss < _eps)
             {
+                // тогда h - решение
+                h.CopyTo(_x);
                 // тогда h - решение. Предыдущий вектор x можно освободить
-                _x.Dispose();
-                _x = h;
+                //_x.Dispose();
+                //_x = h;
                 break;
             }
             
