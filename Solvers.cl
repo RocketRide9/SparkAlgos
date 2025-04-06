@@ -45,7 +45,7 @@ real MSRMulSingle
     return dot;
 }
 
-kernel void dot_kernel
+kernel void dot_kernel9999
 (
     global const real4 *v1,
     global const real4 *v2,
@@ -126,10 +126,14 @@ kernel void VecMul
     const int n
 )
 {
-    uint i = get_global_id(0);
-    if (i < n)
+    #pragma unroll
+    for (int w = 0; w < 4; w++)
     {
-        y[i] *= x[i];
+        uint i = w*get_global_size(0) + get_global_id(0);
+        if (i < n)
+        {
+            y[i] *= x[i];
+        }
     }
 }
 

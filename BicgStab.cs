@@ -1,3 +1,4 @@
+using Silk.NET.OpenCL;
 using SparkCL;
 using SparkOCL;
 using Real = float;
@@ -6,74 +7,68 @@ namespace SparkAlgos;
 
 public class BicgStab : IDisposable
 {
-    SparkCL.Memory<Real> _mat;
-    SparkCL.Memory<Real> _di;
-    SparkCL.Memory<Real> _b;
-    SparkCL.Memory<int> _ia;
-    SparkCL.Memory<int> _ja;
+    ComputeBuffer<Real> _mat;
+    ComputeBuffer<Real> _di;
+    ComputeBuffer<Real> _b;
+    ComputeBuffer<int> _ia;
+    ComputeBuffer<int> _ja;
 
     int _maxIter;
     Real _eps;
-    SparkCL.Memory<Real> _x;
+    ComputeBuffer<Real> _x;
     
-    SparkCL.Memory<Real> r;
-    SparkCL.Memory<Real> di_inv;
-    SparkCL.Memory<Real> y;
-    SparkCL.Memory<Real> z;
-    SparkCL.Memory<Real> ks;
-    SparkCL.Memory<Real> kt;
-    SparkCL.Memory<Real> r_hat;
-    SparkCL.Memory<Real> p;
-    SparkCL.Memory<Real> nu;
-    SparkCL.Memory<Real> h;
-    SparkCL.Memory<Real> s;
-    SparkCL.Memory<Real> t;
-    SparkCL.Memory<Real> dotpart;
-    SparkCL.Memory<Real> dotres;
+    ComputeBuffer<Real> r;
+    ComputeBuffer<Real> di_inv;
+    ComputeBuffer<Real> y;
+    ComputeBuffer<Real> z;
+    ComputeBuffer<Real> ks;
+    ComputeBuffer<Real> kt;
+    ComputeBuffer<Real> r_hat;
+    ComputeBuffer<Real> p;
+    ComputeBuffer<Real> nu;
+    ComputeBuffer<Real> h;
+    ComputeBuffer<Real> s;
+    ComputeBuffer<Real> t;
+    ComputeBuffer<Real> dotpart;
+    ComputeBuffer<Real> dotres;
     private bool disposedValue;
 
     public BicgStab(
-        SparkOCL.Array<Real> Mat,
-        SparkOCL.Array<Real> Di,
-        SparkOCL.Array<Real> B,
-        SparkOCL.Array<int> Ia,
-        SparkOCL.Array<int> Ja,
+        Memory<Real> Mat,
+        Memory<Real> Di,
+        Memory<Real> B,
+        Memory<int> Ia,
+        Memory<int> Ja,
 
-        SparkOCL.Array<Real> x0,
+        Memory<Real> x0,
         int maxIter,
         Real eps)
     {
         _maxIter = maxIter;
         _eps = eps;
 
-        _mat = SparkCL.Memory<Real>.ForArray(Mat); 
-        _di = SparkCL.Memory<Real>.ForArray(Di); 
-        _b = SparkCL.Memory<Real>.ForArray(B); 
-        _ia = SparkCL.Memory<int>.ForArray(Ia); 
-        _ja = SparkCL.Memory<int>.ForArray(Ja); 
+        _mat = new ComputeBuffer<Real>(Mat.Span, MemFlags.HostNoAccess); 
+        _di = new ComputeBuffer<Real>(Di.Span, MemFlags.HostNoAccess); 
+        _b = new ComputeBuffer<Real>(B.Span, MemFlags.HostNoAccess); 
+        _ia = new ComputeBuffer<int>(Ia.Span, MemFlags.HostNoAccess); 
+        _ja = new ComputeBuffer<int>(Ja.Span, MemFlags.HostNoAccess); 
 
-        _x = SparkCL.Memory<Real>.ForArray(x0);
-        _x.Write();
-        _b.Write();
-        _ia.Write();
-        _ja.Write();
-        _mat.Write();
-        _di.Write();
+        _x = new ComputeBuffer<Real>(x0.Span, MemFlags.HostReadOnly);
 
-        r       = new SparkCL.Memory<Real>(_b.Count);
-        r_hat   = new SparkCL.Memory<Real>(_b.Count);
-        p       = new SparkCL.Memory<Real>(_b.Count);
-        nu      = new SparkCL.Memory<Real>(_b.Count);
-        h       = new SparkCL.Memory<Real>(_b.Count);
-        s       = new SparkCL.Memory<Real>(_b.Count);
-        t       = new SparkCL.Memory<Real>(_b.Count);
-        di_inv  = new SparkCL.Memory<Real>(_b.Count);
-        y       = new SparkCL.Memory<Real>(_b.Count);
-        z       = new SparkCL.Memory<Real>(_b.Count);
-        ks      = new SparkCL.Memory<Real>(_b.Count);
-        kt      = new SparkCL.Memory<Real>(_b.Count);
-        dotpart = new SparkCL.Memory<Real>(32*2);
-        dotres  = new SparkCL.Memory<Real>(1);
+        r       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        r_hat   = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        p       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        nu      = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        h       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        s       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        t       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        di_inv  = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        y       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        z       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        ks      = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        kt      = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
+        dotpart = new ComputeBuffer<Real>(32*2);
+        dotres  = new ComputeBuffer<Real>(1);
     }
     
     static nuint PaddedTo(int initial, int multiplier)
@@ -86,9 +81,9 @@ public class BicgStab : IDisposable
         }
     }
 
-    public (Array<Real> ans, Real rr, Real pp, int iter) Solve()
+    public (Accessor<Real> ans, Real rr, Real pp, int iter) Solve()
     {
-        var globalWork = new NDRange(PaddedTo(_x.Count, 32));
+        var globalWork = new NDRange(PaddedTo(_x.Length, 32));
         var localWork = new NDRange(16);
 
         // BiCGSTAB
@@ -103,7 +98,7 @@ public class BicgStab : IDisposable
             kernDiscrep.PushArg(_di);
             kernDiscrep.PushArg(_ia);
             kernDiscrep.PushArg(_ja);
-            kernDiscrep.PushArg(_x.Count);
+            kernDiscrep.PushArg(_x.Length);
             kernDiscrep.PushArg(r);
             kernDiscrep.PushArg(_b);
             kernDiscrep.PushArg(_x);
@@ -116,7 +111,7 @@ public class BicgStab : IDisposable
             kernP.SetArg(0, p);
             kernP.SetArg(1, r);
             kernP.SetArg(2, nu);
-            kernP.SetArg(5, p.Count);
+            kernP.SetArg(5, p.Length);
 
         Event PExecute(Real _w, Real _beta)
         {
@@ -134,9 +129,9 @@ public class BicgStab : IDisposable
             kernMul.SetArg(1, _di);
             kernMul.SetArg(2, _ia);
             kernMul.SetArg(3, _ja);
-            kernMul.SetArg(4, _x.Count);
+            kernMul.SetArg(4, _x.Length);
         
-        Event MulExecute(SparkCL.Memory<Real> _a, SparkCL.Memory<Real> _res){
+        Event MulExecute(ComputeBuffer<Real> _a, ComputeBuffer<Real> _res){
             kernMul.SetArg(5, _a);
             kernMul.SetArg(6, _res);
             return kernMul.Execute();
@@ -147,21 +142,21 @@ public class BicgStab : IDisposable
             globalWork,
             localWork
         );
-        Event RsqrtExecute(SparkCL.Memory<Real> _y) {
+        Event RsqrtExecute(ComputeBuffer<Real> _y) {
             kernRsqrt.SetArg(0, _y);
-            kernRsqrt.SetArg(1, _y.Count);
+            kernRsqrt.SetArg(1, _y.Length);
             return kernRsqrt.Execute();
         }
         
         var kernVecMul = solvers.GetKernel(
             "VecMul",
-            globalWork,
-            localWork
+            new NDRange(PaddedTo(_x.Length/4, 16)),
+            new(16)
         );
-        Event VecMulExecute(SparkCL.Memory<Real> _y, SparkCL.Memory<Real> _x) {
+        Event VecMulExecute(ComputeBuffer<Real> _y, ComputeBuffer<Real> _x) {
             kernVecMul.SetArg(0, _y);
             kernVecMul.SetArg(1, _x);
-            kernVecMul.SetArg(2, _y.Count);
+            kernVecMul.SetArg(2, _y.Length);
             return kernVecMul.Execute();
         }
         
@@ -254,6 +249,9 @@ public class BicgStab : IDisposable
             Real beta = (pp1 / pp) * (alpha / w);
 
             // 15.
+            // SBlas.Axpy(-w, nu, p);
+            // SBlas.Scale(beta, p);
+            // SBlas.Axpy(1, r, p);
             PExecute(w, beta);
 
             pp = pp1;
@@ -263,8 +261,7 @@ public class BicgStab : IDisposable
         kernDiscrep.Execute();
         rr = SBlas.Dot(r, r);
 
-        _x.Read();
-        return (_x.Array, rr, pp, iter);
+        return (_x.MapAccessor(MapFlags.Read), rr, pp, iter);
     }
 
     protected virtual void Dispose(bool disposing)
@@ -276,15 +273,16 @@ public class BicgStab : IDisposable
                 // TODO: освободить управляемое состояние (управляемые объекты)
             }
 
-            r.Dispose();
-            r_hat.Dispose();
-            p.Dispose();
-            nu.Dispose();
-            h.Dispose();
-            s.Dispose();
-            t.Dispose();
-            dotpart.Dispose();
-            dotres.Dispose();
+            // TODO: надо вернуть обратно
+            // r.Dispose();
+            // r_hat.Dispose();
+            // p.Dispose();
+            // nu.Dispose();
+            // h.Dispose();
+            // s.Dispose();
+            // t.Dispose();
+            // dotpart.Dispose();
+            // dotres.Dispose();
             // TODO: освободить неуправляемые ресурсы (неуправляемые объекты) и переопределить метод завершения
             // TODO: установить значение NULL для больших полей
             disposedValue = true;

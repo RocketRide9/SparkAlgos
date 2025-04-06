@@ -1,3 +1,4 @@
+using Silk.NET.OpenCL;
 using SparkCL;
 using Real = float;
 
@@ -24,8 +25,8 @@ public class Blas
     // avoid hidden allocation and passing scratch buffers
     // via paramenters
     // number means the minimum required length
-    public SparkCL.Memory<Real>? Scratch64 { get; set; }
-    public SparkCL.Memory<Real>? Scratch1 { get; set;}
+    public SparkCL.ComputeBuffer<Real>? Scratch64 { get; set; }
+    public SparkCL.ComputeBuffer<Real>? Scratch1 { get; set;}
 
     private Blas()
     {
@@ -66,9 +67,9 @@ public class Blas
     }
 
     /// requires scratch64 and scratch1
-    public Real Dot(SparkCL.Memory<Real> x, SparkCL.Memory<Real> y)
+    public Real Dot(SparkCL.ComputeBuffer<Real> x, SparkCL.ComputeBuffer<Real> y)
     {
-        _dot1.SetArg(0, x.Count);
+        _dot1.SetArg(0, x.Length);
         _dot1.SetArg(1, x);
         _dot1.SetArg(2, y);
         _dot1.SetArg(3, Scratch64!);
@@ -77,28 +78,31 @@ public class Blas
         _dot2.SetArg(0, Scratch64!);
         _dot2.SetArg(1, Scratch1!);
         _dot2.Execute();
-        Scratch1!.Read(true);
 
-        return Scratch1![0];
+        var acc = Scratch1!.MapAccessor(MapFlags.Read);
+        var res = acc[0];
+        acc.Dispose();
+
+        return res;
     }
     
-    public void Scale(Real a, SparkCL.Memory<Real> y)
+    public void Scale(Real a, SparkCL.ComputeBuffer<Real> y)
     {
-        _scale.GlobalWork = new(PaddedTo(y.Count, 32));
+        _scale.GlobalWork = new(PaddedTo(y.Length, 32));
         _scale.SetArg(0, a);
         _scale.SetArg(1, y);
-        _scale.SetArg(2, y.Count);
+        _scale.SetArg(2, y.Length);
 
         _scale.Execute();
     }
     
-    public void Axpy(Real a, SparkCL.Memory<Real> x, SparkCL.Memory<Real> y)
+    public void Axpy(Real a, SparkCL.ComputeBuffer<Real> x, SparkCL.ComputeBuffer<Real> y)
     {
-        _axpy.GlobalWork = new(PaddedTo(y.Count, 32));
+        _axpy.GlobalWork = new(PaddedTo(y.Length, 32));
         _axpy.SetArg(0, a);
         _axpy.SetArg(1, x);
         _axpy.SetArg(2, y);
-        _axpy.SetArg(3, y.Count);
+        _axpy.SetArg(3, y.Length);
 
         _axpy.Execute();
     }
