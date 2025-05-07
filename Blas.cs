@@ -1,6 +1,7 @@
 using Silk.NET.OpenCL;
 using SparkCL;
-using Real = float;
+using OCLHelper;
+using Real = double;
 
 namespace SparkAlgos;
 
@@ -11,7 +12,7 @@ public class Blas
     public static Blas GetInstance()
     {
         if (instance == null) instance = new Blas();
-        
+
         return instance;
     }
 
@@ -30,8 +31,8 @@ public class Blas
 
     private Blas()
     {
-        var localWork = new SparkOCL.NDRange(16);
-        
+        var localWork = new OCLHelper.NDRange(16);
+
         _solvers = new SparkCL.Program("Blas.cl");
         _dot1 = _solvers.GetKernel(
             "Xdot",
@@ -55,7 +56,7 @@ public class Blas
             localWork: localWork
         );
     }
-    
+
     static nuint PaddedTo(int initial, int multiplier)
     {
         if (initial % multiplier == 0)
@@ -85,7 +86,7 @@ public class Blas
 
         return res;
     }
-    
+
     public void Scale(Real a, SparkCL.ComputeBuffer<Real> y)
     {
         _scale.GlobalWork = new(PaddedTo(y.Length, 32));
@@ -95,7 +96,7 @@ public class Blas
 
         _scale.Execute();
     }
-    
+
     public void Axpy(Real a, SparkCL.ComputeBuffer<Real> x, SparkCL.ComputeBuffer<Real> y)
     {
         _axpy.GlobalWork = new(PaddedTo(y.Length, 32));

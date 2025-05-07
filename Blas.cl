@@ -1,4 +1,4 @@
-#define real float
+#define real double
 
 // original: https://github.com/CNugteren/CLBlast/blob/bd96941ac0633e8e7d09fd2475e0279be370b1e1/src/kernels/level1/xdot.opencl
 
@@ -26,7 +26,7 @@ void Xdot(const int n,
     }
     lm[lid] = acc;
     barrier(CLK_LOCAL_MEM_FENCE);
-    
+
     // Performs reduction in local memory
     for (int s=WGS1/2; s>0; s = s >> 1) {
         if (lid < s) {
@@ -34,7 +34,7 @@ void Xdot(const int n,
         }
         barrier(CLK_LOCAL_MEM_FENCE);
     }
-    
+
     // Stores the per-workgroup result
     if (lid == 0) {
         output[wgid] = lm[0];
@@ -49,11 +49,11 @@ void XdotEpilogue(const global real* restrict input,
                   global real* dot) {
     local real lm[WGS2];
     const int lid = get_local_id(0);
-    
+
     // Performs the first step of the reduction while loading the data
     lm[lid] = input[lid] + input[lid + WGS2];
     barrier(CLK_LOCAL_MEM_FENCE);
-    
+
     // Performs reduction in local memory
     for (int s=WGS2/2; s>0; s=s>>1) {
         if (lid < s) {
@@ -61,7 +61,7 @@ void XdotEpilogue(const global real* restrict input,
         }
         barrier(CLK_LOCAL_MEM_FENCE);
     }
-    
+
     // Stores the final result
     if (lid == 0) {
         dot[0] = lm[0];

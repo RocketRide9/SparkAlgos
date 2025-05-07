@@ -1,7 +1,7 @@
 using Silk.NET.OpenCL;
 using SparkCL;
-using SparkOCL;
-using Real = float;
+using OCLHelper;
+using Real = double;
 
 namespace SparkAlgos;
 
@@ -16,7 +16,7 @@ public class BicgStab : IDisposable
     int _maxIter;
     Real _eps;
     ComputeBuffer<Real> _x;
-    
+
     ComputeBuffer<Real> r;
     ComputeBuffer<Real> di_inv;
     ComputeBuffer<Real> y;
@@ -47,11 +47,11 @@ public class BicgStab : IDisposable
         _maxIter = maxIter;
         _eps = eps;
 
-        _mat = new ComputeBuffer<Real>(Mat.Span, MemFlags.HostNoAccess); 
-        _di = new ComputeBuffer<Real>(Di.Span, MemFlags.HostNoAccess); 
-        _b = new ComputeBuffer<Real>(B.Span, MemFlags.HostNoAccess); 
-        _ia = new ComputeBuffer<int>(Ia.Span, MemFlags.HostNoAccess); 
-        _ja = new ComputeBuffer<int>(Ja.Span, MemFlags.HostNoAccess); 
+        _mat = new ComputeBuffer<Real>(Mat.Span, MemFlags.HostNoAccess);
+        _di = new ComputeBuffer<Real>(Di.Span, MemFlags.HostNoAccess);
+        _b = new ComputeBuffer<Real>(B.Span, MemFlags.HostNoAccess);
+        _ia = new ComputeBuffer<int>(Ia.Span, MemFlags.HostNoAccess);
+        _ja = new ComputeBuffer<int>(Ja.Span, MemFlags.HostNoAccess);
 
         _x = new ComputeBuffer<Real>(x0.Span, MemFlags.HostReadOnly);
 
@@ -70,7 +70,7 @@ public class BicgStab : IDisposable
         dotpart = new ComputeBuffer<Real>(32*2);
         dotres  = new ComputeBuffer<Real>(1);
     }
-    
+
     static nuint PaddedTo(int initial, int multiplier)
     {
         if (initial % multiplier == 0)
@@ -130,13 +130,13 @@ public class BicgStab : IDisposable
             kernMul.SetArg(2, _ia);
             kernMul.SetArg(3, _ja);
             kernMul.SetArg(4, _x.Length);
-        
+
         Event MulExecute(ComputeBuffer<Real> _a, ComputeBuffer<Real> _res){
             kernMul.SetArg(5, _a);
             kernMul.SetArg(6, _res);
             return kernMul.Execute();
         }
-        
+
         var kernRsqrt = solvers.GetKernel(
             "BLAS_rsqrt",
             globalWork,
@@ -147,7 +147,7 @@ public class BicgStab : IDisposable
             kernRsqrt.SetArg(1, _y.Length);
             return kernRsqrt.Execute();
         }
-        
+
         var kernVecMul = solvers.GetKernel(
             "VecMul",
             new NDRange(PaddedTo(_x.Length/4, 16)),
@@ -159,7 +159,7 @@ public class BicgStab : IDisposable
             kernVecMul.SetArg(2, _y.Length);
             return kernVecMul.Execute();
         }
-        
+
         var SBlas = SparkAlgos.Blas.GetInstance();
         SBlas.Scratch64 = dotpart;
         SBlas.Scratch1 = dotres;
@@ -187,7 +187,7 @@ public class BicgStab : IDisposable
             VecMulExecute(y, di_inv);
             // 2.
             MulExecute(y, nu);
-            
+
             // 3.
             Real rnu = SBlas.Dot(r_hat, nu);
             Real alpha = pp / rnu;
@@ -195,7 +195,7 @@ public class BicgStab : IDisposable
             // 4. h = x + alpha*p
             _x.CopyTo(h);
             SBlas.Axpy(alpha, y, h);
-            
+
             // 5.
             r.CopyTo(s);
             SBlas.Axpy(-alpha, nu, s);
@@ -211,7 +211,7 @@ public class BicgStab : IDisposable
                 //_x = h;
                 break;
             }
-            
+
             // 7.
             s.CopyTo(ks);
             VecMulExecute(ks, di_inv);
@@ -224,19 +224,19 @@ public class BicgStab : IDisposable
             // 9.
             t.CopyTo(kt);
             VecMulExecute(kt, di_inv);
-            
+
             Real ts = SBlas.Dot(ks, kt);
             Real tt = SBlas.Dot(kt, kt);
             Real w = ts / tt;
 
-            // 10. 
+            // 10.
             h.CopyTo(_x);
             SBlas.Axpy(w, z, _x);
 
             // 11.
             s.CopyTo(r);
             SBlas.Axpy(-w, t, r);
-            
+
             // 12.
             rr = SBlas.Dot(r, r);
             if (rr < _eps)

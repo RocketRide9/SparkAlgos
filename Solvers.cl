@@ -1,4 +1,4 @@
-#define real float
+#define real double
 #define real4 float4
 
 kernel void MSRMul(
