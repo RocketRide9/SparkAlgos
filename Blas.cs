@@ -5,6 +5,15 @@ using Real = double;
 
 namespace SparkAlgos;
 
+public ref struct SlaeRef
+{
+    public Span<Real> Mat;
+    public Span<Real> Di;
+    public Span<Real> B;
+    public Span<int> Ia;
+    public Span<int> Ja;
+}
+
 public class Blas
 {
     static Blas? instance = null;
@@ -16,18 +25,18 @@ public class Blas
         return instance;
     }
 
-    Kernel _dot1;
-    Kernel _dot2;
-    Kernel _scale;
-    Kernel _axpy;
+    SparkCL.Kernel _dot1;
+    SparkCL.Kernel _dot2;
+    SparkCL.Kernel _scale;
+    SparkCL.Kernel _axpy;
     SparkCL.Program _solvers;
 
     // probably not the most elegant solution, but it
     // avoid hidden allocation and passing scratch buffers
     // via paramenters
     // number means the minimum required length
-    public SparkCL.ComputeBuffer<Real>? Scratch64 { get; set; }
-    public SparkCL.ComputeBuffer<Real>? Scratch1 { get; set;}
+    public ComputeBuffer<Real>? Scratch64 { get; set; }
+    public ComputeBuffer<Real>? Scratch1 { get; set;}
 
     private Blas()
     {
@@ -80,11 +89,10 @@ public class Blas
         _dot2.SetArg(1, Scratch1!);
         _dot2.Execute();
 
-        var acc = Scratch1!.MapAccessor(MapFlags.Read);
-        var res = acc[0];
-        acc.Dispose();
+        Span<Real> flt_span = stackalloc Real[1];
+        Scratch1.DeviceReadTo(flt_span);
 
-        return res;
+        return flt_span[0];
     }
 
     public void Scale(Real a, SparkCL.ComputeBuffer<Real> y)

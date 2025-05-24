@@ -7,16 +7,10 @@ namespace SparkAlgos;
 
 public class BicgStab : IDisposable
 {
-    ComputeBuffer<Real> _mat;
-    ComputeBuffer<Real> _di;
-    ComputeBuffer<Real> _b;
-    ComputeBuffer<int> _ia;
-    ComputeBuffer<int> _ja;
-
     int _maxIter;
     Real _eps;
-    ComputeBuffer<Real> _x;
 
+    int _n = 0; // размерность СЛАУ
     ComputeBuffer<Real> r;
     ComputeBuffer<Real> di_inv;
     ComputeBuffer<Real> y;
@@ -32,43 +26,18 @@ public class BicgStab : IDisposable
     ComputeBuffer<Real> dotpart;
     ComputeBuffer<Real> dotres;
     private bool disposedValue;
+    
+    
 
     public BicgStab(
-        Memory<Real> Mat,
-        Memory<Real> Di,
-        Memory<Real> B,
-        Memory<int> Ia,
-        Memory<int> Ja,
-
-        Memory<Real> x0,
         int maxIter,
-        Real eps)
-    {
+        Real eps
+    ) {
         _maxIter = maxIter;
         _eps = eps;
 
-        _mat = new ComputeBuffer<Real>(Mat.Span, MemFlags.HostNoAccess);
-        _di = new ComputeBuffer<Real>(Di.Span, MemFlags.HostNoAccess);
-        _b = new ComputeBuffer<Real>(B.Span, MemFlags.HostNoAccess);
-        _ia = new ComputeBuffer<int>(Ia.Span, MemFlags.HostNoAccess);
-        _ja = new ComputeBuffer<int>(Ja.Span, MemFlags.HostNoAccess);
-
-        _x = new ComputeBuffer<Real>(x0.Span, MemFlags.HostReadOnly);
-
-        r       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        r_hat   = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        p       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        nu      = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        h       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        s       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        t       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        di_inv  = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        y       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        z       = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        ks      = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        kt      = new ComputeBuffer<Real>(_b.Length, MemFlags.HostNoAccess);
-        dotpart = new ComputeBuffer<Real>(32*2);
-        dotres  = new ComputeBuffer<Real>(1);
+        dotpart = new ComputeBuffer<Real>(32*2, BufferFlags.OnDevice);
+        dotres  = new ComputeBuffer<Real>(1, BufferFlags.OnDevice);
     }
 
     static nuint PaddedTo(int initial, int multiplier)
@@ -80,10 +49,40 @@ public class BicgStab : IDisposable
             return ((nuint)initial / 32 + 1 ) * 32;
         }
     }
-
-    public (Accessor<Real> ans, Real rr, Real pp, int iter) Solve()
+    
+    // Выделить память для временных массивов
+    // n - длина каждого массива
+    public void AllocateTemps(int n)
     {
-        var globalWork = new NDRange(PaddedTo(_x.Length, 32));
+        if (n != _n)
+        {
+            _n = n;
+
+            r       = new (n, BufferFlags.OnDevice);
+            r_hat   = new (n, BufferFlags.OnDevice);
+            p       = new (n, BufferFlags.OnDevice);
+            nu      = new (n, BufferFlags.OnDevice);
+            h       = new (n, BufferFlags.OnDevice);
+            s       = new (n, BufferFlags.OnDevice);
+            t       = new (n, BufferFlags.OnDevice);
+            di_inv  = new (n, BufferFlags.OnDevice);
+            y       = new (n, BufferFlags.OnDevice);
+            z       = new (n, BufferFlags.OnDevice);
+            ks      = new (n, BufferFlags.OnDevice);
+            kt      = new (n, BufferFlags.OnDevice);
+        }
+    }
+
+    public (Real rr, Real pp, int iter) Solve(SlaeRef slae, Span<Real> x)
+    {
+        var _mat = new ComputeBuffer<Real>(slae.Mat, BufferFlags.OnDevice);
+        var _di  = new ComputeBuffer<Real>(slae.Di,  BufferFlags.OnDevice);
+        var _b   = new ComputeBuffer<Real>(slae.B,   BufferFlags.OnDevice);
+        var _ia  = new ComputeBuffer<int> (slae.Ia,  BufferFlags.OnDevice);
+        var _ja  = new ComputeBuffer<int> (slae.Ja,  BufferFlags.OnDevice);
+        var _x   = new ComputeBuffer<Real>(x,        BufferFlags.OnDevice);
+        
+        var globalWork = new NDRange(PaddedTo(x.Length, 32));
         var localWork = new NDRange(16);
 
         // BiCGSTAB
@@ -165,24 +164,24 @@ public class BicgStab : IDisposable
         SBlas.Scratch1 = dotres;
 
         // precond
-        _di.CopyTo(di_inv);
+        _di.CopyDeviceTo(di_inv);
         RsqrtExecute(di_inv);
         // BiCGSTAB
         // 1.
         kernDiscrep.Execute();
         // 2.
-        r.CopyTo(r_hat);
+        r.CopyDeviceTo(r_hat);
         // 3.
         Real pp = SBlas.Dot(r, r); // r_hat * r
         // 4.
-        r.CopyTo(p);
+        r.CopyDeviceTo(p);
 
         int iter = 0;
         Real rr;
         for (; iter < _maxIter; iter++)
         {
             // 1.
-            p.CopyTo(y);
+            p.CopyDeviceTo(y);
             VecMulExecute(y, di_inv);
             VecMulExecute(y, di_inv);
             // 2.
@@ -193,11 +192,11 @@ public class BicgStab : IDisposable
             Real alpha = pp / rnu;
 
             // 4. h = x + alpha*p
-            _x.CopyTo(h);
+            _x.CopyDeviceTo(h);
             SBlas.Axpy(alpha, y, h);
 
             // 5.
-            r.CopyTo(s);
+            r.CopyDeviceTo(s);
             SBlas.Axpy(-alpha, nu, s);
 
             // 6.
@@ -205,7 +204,7 @@ public class BicgStab : IDisposable
             if (ss < _eps)
             {
                 // тогда h - решение
-                h.CopyTo(_x);
+                h.CopyDeviceTo(_x);
                 // тогда h - решение. Предыдущий вектор x можно освободить
                 //_x.Dispose();
                 //_x = h;
@@ -213,16 +212,16 @@ public class BicgStab : IDisposable
             }
 
             // 7.
-            s.CopyTo(ks);
+            s.CopyDeviceTo(ks);
             VecMulExecute(ks, di_inv);
-            ks.CopyTo(z);
+            ks.CopyDeviceTo(z);
             VecMulExecute(z, di_inv);
 
             // 8.
             MulExecute(z, t);
 
             // 9.
-            t.CopyTo(kt);
+            t.CopyDeviceTo(kt);
             VecMulExecute(kt, di_inv);
 
             Real ts = SBlas.Dot(ks, kt);
@@ -230,11 +229,11 @@ public class BicgStab : IDisposable
             Real w = ts / tt;
 
             // 10.
-            h.CopyTo(_x);
+            h.CopyDeviceTo(_x);
             SBlas.Axpy(w, z, _x);
 
             // 11.
-            s.CopyTo(r);
+            s.CopyDeviceTo(r);
             SBlas.Axpy(-w, t, r);
 
             // 12.
@@ -260,8 +259,9 @@ public class BicgStab : IDisposable
         // get the true discrepancy
         kernDiscrep.Execute();
         rr = SBlas.Dot(r, r);
+        _x.DeviceReadTo(x);
 
-        return (_x.MapAccessor(MapFlags.Read), rr, pp, iter);
+        return (rr, pp, iter);
     }
 
     protected virtual void Dispose(bool disposing)
