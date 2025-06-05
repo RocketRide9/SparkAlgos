@@ -1,11 +1,11 @@
-using Silk.NET.OpenCL;
-using SparkCL;
-using OCLHelper;
 using Real = double;
 
-namespace SparkAlgos;
+using SparkCL;
+using OCLHelper;
 
-public class BicgStab : IDisposable
+namespace SparkAlgos.Solver;
+
+public partial class BicgStab : IDisposable
 {
     int _maxIter;
     Real _eps;
@@ -26,8 +26,6 @@ public class BicgStab : IDisposable
     ComputeBuffer<Real> dotpart;
     ComputeBuffer<Real> dotres;
     private bool disposedValue;
-    
-    
 
     public BicgStab(
         int maxIter,
@@ -38,16 +36,6 @@ public class BicgStab : IDisposable
 
         dotpart = new ComputeBuffer<Real>(32*2, BufferFlags.OnDevice);
         dotres  = new ComputeBuffer<Real>(1, BufferFlags.OnDevice);
-    }
-
-    static nuint PaddedTo(int initial, int multiplier)
-    {
-        if (initial % multiplier == 0)
-        {
-            return (nuint)initial;
-        } else {
-            return ((nuint)initial / 32 + 1 ) * 32;
-        }
     }
     
     // Выделить память для временных массивов
@@ -73,34 +61,18 @@ public class BicgStab : IDisposable
         }
     }
 
-    public (Real rr, Real pp, int iter) Solve(SlaeRef slae, Span<Real> x)
+    public (Real rr, Real pp, int iter) Solve(Types.Matrix matrix, Span<Real> b, Span<Real> x)
     {
-        var _mat = new ComputeBuffer<Real>(slae.Mat, BufferFlags.OnDevice);
-        var _di  = new ComputeBuffer<Real>(slae.Di,  BufferFlags.OnDevice);
-        var _b   = new ComputeBuffer<Real>(slae.B,   BufferFlags.OnDevice);
-        var _ia  = new ComputeBuffer<int> (slae.Ia,  BufferFlags.OnDevice);
-        var _ja  = new ComputeBuffer<int> (slae.Ja,  BufferFlags.OnDevice);
-        var _x   = new ComputeBuffer<Real>(x,        BufferFlags.OnDevice);
+        AllocateTemps(x.Length);
+
+        var _x = new ComputeBuffer<Real>(x, BufferFlags.OnDevice);
+        var _b = new ComputeBuffer<Real>(b, BufferFlags.OnDevice);
         
-        var globalWork = new NDRange(PaddedTo(x.Length, 32));
-        var localWork = new NDRange(16);
+        var globalWork = new NDRange((nuint)x.Length).PadTo(32);
+        var localWork = new NDRange(32);
 
         // BiCGSTAB
-        var solvers = new SparkCL.Program("Solvers.cl");
-
-        var kernDiscrep = solvers.GetKernel(
-            "BiCGSTAB_disc",
-            globalWork,
-            localWork
-        );
-            kernDiscrep.PushArg(_mat);
-            kernDiscrep.PushArg(_di);
-            kernDiscrep.PushArg(_ia);
-            kernDiscrep.PushArg(_ja);
-            kernDiscrep.PushArg(_x.Length);
-            kernDiscrep.PushArg(r);
-            kernDiscrep.PushArg(_b);
-            kernDiscrep.PushArg(_x);
+        var solvers = new ComputeProgram("Solver/Solvers.cl");
 
         var kernP = solvers.GetKernel(
             "BiCGSTAB_p",
@@ -119,23 +91,6 @@ public class BicgStab : IDisposable
             return kernP.Execute();
         }
 
-        var kernMul = solvers.GetKernel(
-            "MSRMul",
-            globalWork,
-            localWork
-        );
-            kernMul.SetArg(0, _mat);
-            kernMul.SetArg(1, _di);
-            kernMul.SetArg(2, _ia);
-            kernMul.SetArg(3, _ja);
-            kernMul.SetArg(4, _x.Length);
-
-        Event MulExecute(ComputeBuffer<Real> _a, ComputeBuffer<Real> _res){
-            kernMul.SetArg(5, _a);
-            kernMul.SetArg(6, _res);
-            return kernMul.Execute();
-        }
-
         var kernRsqrt = solvers.GetKernel(
             "BLAS_rsqrt",
             globalWork,
@@ -149,7 +104,7 @@ public class BicgStab : IDisposable
 
         var kernVecMul = solvers.GetKernel(
             "VecMul",
-            new NDRange(PaddedTo(_x.Length/4, 16)),
+            new NDRange((nuint)_x.Length/4).PadTo(16),
             new(16)
         );
         Event VecMulExecute(ComputeBuffer<Real> _y, ComputeBuffer<Real> _x) {
@@ -164,11 +119,13 @@ public class BicgStab : IDisposable
         SBlas.Scratch1 = dotres;
 
         // precond
-        _di.CopyDeviceTo(di_inv);
+        matrix.Di.CopyDeviceTo(di_inv);
         RsqrtExecute(di_inv);
         // BiCGSTAB
         // 1.
-        kernDiscrep.Execute();
+        matrix.Mul(_x, t);
+        _b.CopyDeviceTo(r);
+        SBlas.Axpy(-1, t, r);
         // 2.
         r.CopyDeviceTo(r_hat);
         // 3.
@@ -185,7 +142,7 @@ public class BicgStab : IDisposable
             VecMulExecute(y, di_inv);
             VecMulExecute(y, di_inv);
             // 2.
-            MulExecute(y, nu);
+            matrix.Mul(y, nu);
 
             // 3.
             Real rnu = SBlas.Dot(r_hat, nu);
@@ -218,7 +175,7 @@ public class BicgStab : IDisposable
             VecMulExecute(z, di_inv);
 
             // 8.
-            MulExecute(z, t);
+            matrix.Mul(z, t);
 
             // 9.
             t.CopyDeviceTo(kt);
@@ -257,7 +214,9 @@ public class BicgStab : IDisposable
         }
 
         // get the true discrepancy
-        kernDiscrep.Execute();
+        matrix.Mul(_x, t);
+        _b.CopyDeviceTo(r);
+        SBlas.Axpy(-1, t, r);
         rr = SBlas.Dot(r, r);
         _x.DeviceReadTo(x);
 

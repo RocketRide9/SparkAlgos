@@ -1,50 +1,6 @@
 #define real double
 #define real4 float4
 
-kernel void MSRMul(
-    global const real *mat,
-    global const real *di,
-    global const int *aptr,
-    global const int *jptr,
-    const int n,
-    global const real *v,
-    global real *res)
-{
-    size_t row = get_global_id(0);
-
-    if (row < n)
-    {
-        int start = aptr[row];
-        int stop = aptr[row + 1];
-        real dot = di[row]*v[row];
-        for (int a = start; a < stop; a++)
-        {
-            dot += mat[a]*v[jptr[a]];
-        }
-        res[row] = dot;
-    }
-}
-
-real MSRMulSingle
-(
-    global const real *mat,
-    global const real *di,
-    global const int *aptr,
-    global const int *jptr,
-    const uint row,
-    global const real *v
-)
-{
-    int start = aptr[row];
-    int stop = aptr[row + 1];
-    real dot = di[row]*v[row];
-    for (int a = start; a < stop; a++)
-    {
-        dot += mat[a]*v[jptr[a]];
-    }
-    return dot;
-}
-
 kernel void dot_kernel9999
 (
     global const real4 *v1,
@@ -80,30 +36,6 @@ kernel void dot_kernel9999
     // Write final result in Y
     if ( jj == 0 ) *res = work[0];
 }
-
-// discrepancy
-kernel void BiCGSTAB_disc
-(
-    // матрица
-    global const real *mat,
-    global const real *di,
-    global const int *aptr,
-    global const int *jptr,
-    const int n,
-    // вспомогательные массивы
-    global real *r,
-    global const real *f,
-    global const real *x
-)
-{
-    uint i = get_global_id(0);
-    if (i < n)
-    {
-        r[i] = f[i] - MSRMulSingle(mat, di, aptr, jptr, i, x);
-    }
-}
-
-
 
 // y = y^-1/2
 kernel void BLAS_rsqrt

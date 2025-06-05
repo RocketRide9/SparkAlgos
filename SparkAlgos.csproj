@@ -11,10 +11,16 @@
   </ItemGroup>
   
   <ItemGroup>
-    <None Update="Solvers.cl">
+    <None Update="Solver/Solvers.cl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Blas.cl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Matrices/MsrMatrix.cl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Matrices/DiagMatrix.cl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

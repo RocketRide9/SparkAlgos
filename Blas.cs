@@ -1,18 +1,10 @@
-using Silk.NET.OpenCL;
-using SparkCL;
-using OCLHelper;
 using Real = double;
 
-namespace SparkAlgos;
 
-public ref struct SlaeRef
-{
-    public Span<Real> Mat;
-    public Span<Real> Di;
-    public Span<Real> B;
-    public Span<int> Ia;
-    public Span<int> Ja;
-}
+using SparkCL;
+using OCLHelper;
+
+namespace SparkAlgos;
 
 public class Blas
 {
@@ -29,7 +21,7 @@ public class Blas
     SparkCL.Kernel _dot2;
     SparkCL.Kernel _scale;
     SparkCL.Kernel _axpy;
-    SparkCL.Program _solvers;
+    ComputeProgram _solvers;
 
     // probably not the most elegant solution, but it
     // avoid hidden allocation and passing scratch buffers
@@ -42,7 +34,7 @@ public class Blas
     {
         var localWork = new OCLHelper.NDRange(16);
 
-        _solvers = new SparkCL.Program("Blas.cl");
+        _solvers = new SparkCL.ComputeProgram("Blas.cl");
         _dot1 = _solvers.GetKernel(
             "Xdot",
             globalWork: new(32*32*2),
@@ -66,16 +58,6 @@ public class Blas
         );
     }
 
-    static nuint PaddedTo(int initial, int multiplier)
-    {
-        if (initial % multiplier == 0)
-        {
-            return (nuint)initial;
-        } else {
-            return ((nuint)initial / 32 + 1 ) * 32;
-        }
-    }
-
     /// requires scratch64 and scratch1
     public Real Dot(SparkCL.ComputeBuffer<Real> x, SparkCL.ComputeBuffer<Real> y)
     {
@@ -97,7 +79,7 @@ public class Blas
 
     public void Scale(Real a, SparkCL.ComputeBuffer<Real> y)
     {
-        _scale.GlobalWork = new(PaddedTo(y.Length, 32));
+        _scale.GlobalWork = new NDRange((nuint)y.Length).PadTo(32);
         _scale.SetArg(0, a);
         _scale.SetArg(1, y);
         _scale.SetArg(2, y.Length);
@@ -105,9 +87,10 @@ public class Blas
         _scale.Execute();
     }
 
+    /// y += a*x
     public void Axpy(Real a, SparkCL.ComputeBuffer<Real> x, SparkCL.ComputeBuffer<Real> y)
     {
-        _axpy.GlobalWork = new(PaddedTo(y.Length, 32));
+        _axpy.GlobalWork = new NDRange((nuint)y.Length).PadTo(32);
         _axpy.SetArg(0, a);
         _axpy.SetArg(1, x);
         _axpy.SetArg(2, y);
