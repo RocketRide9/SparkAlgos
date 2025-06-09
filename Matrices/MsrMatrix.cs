@@ -13,8 +13,8 @@ public class MsrMatrix : Matrix
     public ComputeBuffer<int> Ia;
     public ComputeBuffer<int> Ja;
 
-    int Matrix.Size => Di.Length;
-    ComputeBuffer<double> Matrix.Di => Di;
+    public int Matrix.Size => Di.Length;
+    ComputeBuffer<Real> Matrix.Di => Di;
 
     static SparkCL.Kernel? kernMul;
     public MsrMatrix(MsrMatrixRef matrix)
@@ -25,7 +25,7 @@ public class MsrMatrix : Matrix
         Di    = new ComputeBuffer<Real> (matrix.Di, BufferFlags.OnDevice);
     }
 
-    public void Mul(ComputeBuffer<double> vec, ComputeBuffer<double> res)
+    public void Mul(ComputeBuffer<Real> vec, ComputeBuffer<Real> res)
     {
         if (kernMul == null)
         {

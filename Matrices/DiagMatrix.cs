@@ -28,8 +28,8 @@ public class DiagMatrix : Matrix
     // то Gap == 1.
     public int Gap;
 
-    int Matrix.Size => Di.Length;
-    ComputeBuffer<double> Matrix.Di => Di;
+    public int Size => Di.Length;
+    ComputeBuffer<Real> Matrix.Di => Di;
 
     static SparkCL.Kernel? kernMul;
 
@@ -48,10 +48,8 @@ public class DiagMatrix : Matrix
         Gap = matrix.Gap;
     }
 
-    public void Mul(ComputeBuffer<double> vec, ComputeBuffer<double> res)
+    public void Mul(ComputeBuffer<Real> vec, ComputeBuffer<Real> res)
     {
-        throw new NotImplementedException();
-        #if false
         if (kernMul == null)
         {
             var support = new ComputeProgram("Matrices/DiagMatrix.cl");
@@ -59,20 +57,26 @@ public class DiagMatrix : Matrix
 
             kernMul = support.GetKernel(
                 "DIAGMul",
-                new(NDRange.PaddedTo(vec.Length, 32)),
+                new NDRange((nuint)vec.Length).PadTo(32),
                 localWork
             );
-            kernMul.SetArg(0, Elems);
-            kernMul.SetArg(1, Di);
-            kernMul.SetArg(2, Ia);
-            kernMul.SetArg(3, Ja);
-            kernMul.SetArg(4, vec.Length);
         }
+            kernMul.GlobalWork = new NDRange((nuint)vec.Length).PadTo(32);
+            kernMul.SetArg(0, Ld3);
+            kernMul.SetArg(1, Ld2);
+            kernMul.SetArg(2, Ld1);
+            kernMul.SetArg(3, Ld0);
+            kernMul.SetArg(4, Di);
+            kernMul.SetArg(5, Rd0);
+            kernMul.SetArg(6, Rd1);
+            kernMul.SetArg(7, Rd2);
+            kernMul.SetArg(8, Rd3);
+            kernMul.SetArg(9, vec.Length);
+            kernMul.SetArg(10, Gap);
 
-        kernMul.SetArg(5, vec);
-        kernMul.SetArg(6, res);
+        kernMul.SetArg(11, vec);
+        kernMul.SetArg(12, res);
 
         kernMul.Execute();
-        #endif
     }
 }
