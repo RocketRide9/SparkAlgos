@@ -6,6 +6,31 @@ using OCLHelper;
 namespace SparkAlgos.Matrices;
 using Types;
 
+public ref struct DiagMatrixRef : MatrixContainer
+{
+    // Left diagonal
+    public required Span<Real> Ld3;
+    public required Span<Real> Ld2;
+    public required Span<Real> Ld1;
+    public required Span<Real> Ld0;
+    // Основная диагональ
+    public required Span<Real> Di;
+    // Right diagonal
+    public required Span<Real> Rd0;
+    public required Span<Real> Rd1;
+    public required Span<Real> Rd2;
+    public required Span<Real> Rd3;
+
+    // Ld0 и Rd0 (*d0) находятся "вплотную" к основной диагонали
+    // *d1, *d2, *d3 находятся стоят "вплотную" друг к другу
+    // *d1 смещена на Gap элементов от *d0.
+    // Например, если они находятся вплотную друг к друг,
+    // то Gap == 1.
+    public required int Gap;
+    
+    public int Size => Di.Length;
+}
+
 public class DiagMatrix : Matrix
 {
     // Left diagonal
@@ -56,7 +81,7 @@ public class DiagMatrix : Matrix
             var localWork = new NDRange(32);
 
             kernMul = support.GetKernel(
-                "DIAGMul",
+                "DiagMul",
                 new NDRange((nuint)vec.Length).PadTo(32),
                 localWork
             );

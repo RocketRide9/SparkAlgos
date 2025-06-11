@@ -1,7 +1,7 @@
 #define real double
 #define real4 float4
 
-kernel void DIAGMul(
+kernel void DiagMul(
     global const real *ld3,
     global const real *ld2,
     global const real *ld1,

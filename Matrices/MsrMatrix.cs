@@ -6,6 +6,16 @@ using OCLHelper;
 namespace SparkAlgos.Matrices;
 using Types;
 
+public ref struct MsrMatrixRef : MatrixContainer
+{
+    public required Span<Real> Elems;
+    public required Span<Real> Di;
+    public required Span<int> Ia;
+    public required Span<int> Ja;
+
+    public int Size => Di.Length;
+}
+
 public class MsrMatrix : Matrix
 {
     public ComputeBuffer<Real> Elems;
@@ -13,7 +23,7 @@ public class MsrMatrix : Matrix
     public ComputeBuffer<int> Ia;
     public ComputeBuffer<int> Ja;
 
-    public int Matrix.Size => Di.Length;
+    public int Size => Di.Length;
     ComputeBuffer<Real> Matrix.Di => Di;
 
     static SparkCL.Kernel? kernMul;
@@ -33,7 +43,7 @@ public class MsrMatrix : Matrix
             var localWork = new NDRange(32);
 
             kernMul = support.GetKernel(
-                "MSRMul",
+                "MsrMul",
                 new NDRange((nuint)vec.Length).PadTo(32),
                 localWork
             );

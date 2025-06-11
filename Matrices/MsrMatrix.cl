@@ -1,7 +1,7 @@
 #define real double
 #define real4 float4
 
-kernel void MSRMul(
+kernel void MsrMul(
     global const real *mat,
     global const real *di,
     global const int *aptr,
