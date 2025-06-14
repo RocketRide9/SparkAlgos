@@ -1,11 +1,13 @@
 using Real = double;
 
+using System.Diagnostics;
+
 using SparkCL;
 using OCLHelper;
 
-namespace SparkAlgos.Solver;
+namespace SparkAlgos.SlaeSolver;
 
-public partial class BicgStab : IDisposable
+public class CgmOCL : IDisposable, ISlaeSolver
 {
     int _maxIter;
     Real _eps;
@@ -13,31 +15,28 @@ public partial class BicgStab : IDisposable
     int _n = 0; // размерность СЛАУ
     ComputeBuffer<Real> r;
     ComputeBuffer<Real> di_inv;
-    ComputeBuffer<Real> y;
+    ComputeBuffer<Real> mr;
+    ComputeBuffer<Real> az;
     ComputeBuffer<Real> z;
-    ComputeBuffer<Real> ks;
-    ComputeBuffer<Real> kt;
-    ComputeBuffer<Real> r_hat;
-    ComputeBuffer<Real> p;
-    ComputeBuffer<Real> nu;
-    ComputeBuffer<Real> h;
-    ComputeBuffer<Real> s;
-    ComputeBuffer<Real> t;
     ComputeBuffer<Real> dotpart;
     ComputeBuffer<Real> dotres;
     private bool disposedValue;
 
-    public BicgStab(
+    public CgmOCL(
         int maxIter,
         Real eps
     ) {
         _maxIter = maxIter;
-        _eps = eps;
+        // TODO: уменьшение eps чтобы невязка ответа была сравнима с BicgStab
+        _eps = eps / 1e+7;
 
         dotpart = new ComputeBuffer<Real>(32*2, BufferFlags.OnDevice);
         dotres  = new ComputeBuffer<Real>(1, BufferFlags.OnDevice);
     }
-    
+
+    public static ISlaeSolver Construct(int maxIter, double eps)
+        => new CgmOCL(maxIter, eps);
+
     // Выделить память для временных массивов
     // n - длина каждого массива
     public void AllocateTemps(int n)
@@ -47,48 +46,29 @@ public partial class BicgStab : IDisposable
             _n = n;
 
             r       = new (n, BufferFlags.OnDevice);
-            r_hat   = new (n, BufferFlags.OnDevice);
-            p       = new (n, BufferFlags.OnDevice);
-            nu      = new (n, BufferFlags.OnDevice);
-            h       = new (n, BufferFlags.OnDevice);
-            s       = new (n, BufferFlags.OnDevice);
-            t       = new (n, BufferFlags.OnDevice);
             di_inv  = new (n, BufferFlags.OnDevice);
-            y       = new (n, BufferFlags.OnDevice);
+            mr      = new (n, BufferFlags.OnDevice);
+            az      = new (n, BufferFlags.OnDevice);
             z       = new (n, BufferFlags.OnDevice);
-            ks      = new (n, BufferFlags.OnDevice);
-            kt      = new (n, BufferFlags.OnDevice);
         }
     }
 
-    public (Real rr, Real pp, int iter) Solve(Types.Matrix matrix, Span<Real> b, Span<Real> x)
+    static ComputeProgram? solvers;
+    public (Real discrep, int iter) Solve(Types.Matrix matrix, Span<Real> b, Span<Real> x)
     {
+        var sw = Stopwatch.StartNew();
         AllocateTemps(x.Length);
 
         var _x = new ComputeBuffer<Real>(x, BufferFlags.OnDevice);
         var _b = new ComputeBuffer<Real>(b, BufferFlags.OnDevice);
         
-        var globalWork = new NDRange((nuint)x.Length).PadTo(32);
-        var localWork = new NDRange(32);
+        var globalWork = new NDRange((nuint)x.Length).PadTo(Core.Prefered1D);
+        var localWork = new NDRange(Core.Prefered1D);
 
         // BiCGSTAB
-        var solvers = new ComputeProgram("Solver/Solvers.cl");
-
-        var kernP = solvers.GetKernel(
-            "BiCGSTAB_p",
-            globalWork,
-            localWork
-        );
-            kernP.SetArg(0, p);
-            kernP.SetArg(1, r);
-            kernP.SetArg(2, nu);
-            kernP.SetArg(5, p.Length);
-
-        Event PExecute(Real _w, Real _beta)
+        if (solvers == null)
         {
-            kernP.SetArg(3, _w);
-            kernP.SetArg(4, _beta);
-            return kernP.Execute();
+            solvers = new ComputeProgram("SlaeSolver/Solvers.cl");
         }
 
         var kernRsqrt = solvers.GetKernel(
@@ -104,8 +84,8 @@ public partial class BicgStab : IDisposable
 
         var kernVecMul = solvers.GetKernel(
             "VecMul",
-            new NDRange((nuint)_x.Length/4).PadTo(16),
-            new(16)
+            new NDRange((nuint)_x.Length/4).PadTo(Core.Prefered1D),
+            new(Core.Prefered1D)
         );
         Event VecMulExecute(ComputeBuffer<Real> _y, ComputeBuffer<Real> _x) {
             kernVecMul.SetArg(0, _y);
@@ -114,113 +94,69 @@ public partial class BicgStab : IDisposable
             return kernVecMul.Execute();
         }
 
+        // TODO: set scratch buffers once per SBlas instance
         var SBlas = SparkAlgos.Blas.GetInstance();
         SBlas.Scratch64 = dotpart;
         SBlas.Scratch1 = dotres;
 
+        Trace.WriteLine($"OpenCL prepare: {sw.ElapsedMilliseconds}ms");
+
         // precond
         matrix.Di.CopyDeviceTo(di_inv);
         RsqrtExecute(di_inv);
-        // BiCGSTAB
+        // Cgm
         // 1.
-        matrix.Mul(_x, t);
+        matrix.Mul(_x, z);
         _b.CopyDeviceTo(r);
-        SBlas.Axpy(-1, t, r);
+        SBlas.Axpy(-1, z, r);
         // 2.
-        r.CopyDeviceTo(r_hat);
-        // 3.
-        Real pp = SBlas.Dot(r, r); // r_hat * r
-        // 4.
-        r.CopyDeviceTo(p);
+        r.CopyDeviceTo(z);
+        VecMulExecute(z, di_inv);
+
+        r.CopyDeviceTo(mr);
+        VecMulExecute(mr, di_inv);
+        var mrr0 = SBlas.Dot(mr, r);
 
         int iter = 0;
-        Real rr;
         for (; iter < _maxIter; iter++)
         {
-            // 1.
-            p.CopyDeviceTo(y);
-            VecMulExecute(y, di_inv);
-            VecMulExecute(y, di_inv);
-            // 2.
-            matrix.Mul(y, nu);
-
             // 3.
-            Real rnu = SBlas.Dot(r_hat, nu);
-            Real alpha = pp / rnu;
+            z.CopyDeviceTo(az);
+            matrix.Mul(z, az);
 
-            // 4. h = x + alpha*p
-            _x.CopyDeviceTo(h);
-            SBlas.Axpy(alpha, y, h);
-
+            var azz = SBlas.Dot(az, z);
+            var alpha = mrr0 / azz;
+            // 4.
+            SBlas.Axpy(alpha, z, _x);
             // 5.
-            r.CopyDeviceTo(s);
-            SBlas.Axpy(-alpha, nu, s);
-
+            SBlas.Axpy(-alpha, az, r);
             // 6.
-            Real ss = SBlas.Dot(s, s);
-            if (ss < _eps)
-            {
-                // тогда h - решение
-                h.CopyDeviceTo(_x);
-                // тогда h - решение. Предыдущий вектор x можно освободить
-                //_x.Dispose();
-                //_x = h;
-                break;
-            }
-
+            r.CopyDeviceTo(mr);
+            VecMulExecute(di_inv, r);
+            var mrr1 = SBlas.Dot(mr, r);
+            var beta = mrr1/mrr0;
             // 7.
-            s.CopyDeviceTo(ks);
-            VecMulExecute(ks, di_inv);
-            ks.CopyDeviceTo(z);
-            VecMulExecute(z, di_inv);
+            SBlas.Scale(beta, z);
+            SBlas.Axpy(1, mr, z);
 
-            // 8.
-            matrix.Mul(z, t);
+            mrr0 = mrr1;
 
-            // 9.
-            t.CopyDeviceTo(kt);
-            VecMulExecute(kt, di_inv);
-
-            Real ts = SBlas.Dot(ks, kt);
-            Real tt = SBlas.Dot(kt, kt);
-            Real w = ts / tt;
-
-            // 10.
-            h.CopyDeviceTo(_x);
-            SBlas.Axpy(w, z, _x);
-
-            // 11.
-            s.CopyDeviceTo(r);
-            SBlas.Axpy(-w, t, r);
-
-            // 12.
-            rr = SBlas.Dot(r, r);
-            if (rr < _eps)
+            var rr = SBlas.Dot(r, r);
+            var bb = SBlas.Dot(_b, _b);
+            if (rr / bb < _eps)
             {
                 break;
             }
-
-            // 13-14.
-            Real pp1 = SBlas.Dot(r, r_hat);
-            Real beta = (pp1 / pp) * (alpha / w);
-
-            // 15.
-            // SBlas.Axpy(-w, nu, p);
-            // SBlas.Scale(beta, p);
-            // SBlas.Axpy(1, r, p);
-            PExecute(w, beta);
-
-            pp = pp1;
         }
 
-        // get the true discrepancy
-        matrix.Mul(_x, t);
+        matrix.Mul(_x, z);
         _b.CopyDeviceTo(r);
-        SBlas.Axpy(-1, t, r);
-        rr = SBlas.Dot(r, r);
+        SBlas.Axpy(-1, z, r);
+        // BLAS.axpy(_x.Length, -1, t, r);
+        var rr2 = SBlas.Dot(r, r);
         _x.DeviceReadTo(x);
 
-        return (rr, pp, iter);
+        return (rr2, iter);
     }
 
     protected virtual void Dispose(bool disposing)
@@ -249,7 +185,7 @@ public partial class BicgStab : IDisposable
     }
 
     // // TODO: переопределить метод завершения, только если "Dispose(bool disposing)" содержит код для освобождения неуправляемых ресурсов
-    ~BicgStab()
+    ~CgmOCL()
     {
         // Не изменяйте этот код. Разместите код очистки в методе "Dispose(bool disposing)".
         Dispose(disposing: false);

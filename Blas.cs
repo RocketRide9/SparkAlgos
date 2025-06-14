@@ -32,7 +32,7 @@ public class Blas
 
     private Blas()
     {
-        var localWork = new OCLHelper.NDRange(16);
+        var localWork = new OCLHelper.NDRange(Core.Prefered1D);
 
         _solvers = new SparkCL.ComputeProgram("Blas.cl");
         _dot1 = _solvers.GetKernel(
@@ -79,7 +79,7 @@ public class Blas
 
     public void Scale(Real a, SparkCL.ComputeBuffer<Real> y)
     {
-        _scale.GlobalWork = new NDRange((nuint)y.Length).PadTo(32);
+        _scale.GlobalWork = new NDRange((nuint)y.Length).PadTo(Core.Prefered1D);
         _scale.SetArg(0, a);
         _scale.SetArg(1, y);
         _scale.SetArg(2, y.Length);
@@ -90,7 +90,7 @@ public class Blas
     /// y += a*x
     public void Axpy(Real a, SparkCL.ComputeBuffer<Real> x, SparkCL.ComputeBuffer<Real> y)
     {
-        _axpy.GlobalWork = new NDRange((nuint)y.Length).PadTo(32);
+        _axpy.GlobalWork = new NDRange((nuint)y.Length).PadTo(Core.Prefered1D);
         _axpy.SetArg(0, a);
         _axpy.SetArg(1, x);
         _axpy.SetArg(2, y);

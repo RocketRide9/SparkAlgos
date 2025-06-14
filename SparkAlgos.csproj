@@ -11,7 +11,7 @@
   </ItemGroup>
   
   <ItemGroup>
-    <None Update="Solver/Solvers.cl">
+    <None Update="SlaeSolver/Solvers.cl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Blas.cl">

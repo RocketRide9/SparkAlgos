@@ -58,15 +58,15 @@ public class SymDiagMatrix : Matrix
         if (kernMul == null)
         {
             var support = new ComputeProgram("Matrices/SymDiagMatrix.cl");
-            var localWork = new NDRange(32);
+            var localWork = new NDRange(Core.Prefered1D);
 
             kernMul = support.GetKernel(
                 "SymDiagMul",
-                new NDRange((nuint)vec.Length).PadTo(32),
+                new NDRange((nuint)vec.Length).PadTo(Core.Prefered1D),
                 localWork
             );
         }
-            kernMul.GlobalWork = new NDRange((nuint)vec.Length).PadTo(32);
+            kernMul.GlobalWork = new NDRange((nuint)vec.Length).PadTo(Core.Prefered1D);
             kernMul.SetArg(0, d3);
             kernMul.SetArg(1, d2);
             kernMul.SetArg(2, d1);
